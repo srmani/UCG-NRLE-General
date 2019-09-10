@@ -9,7 +9,6 @@
 #include "fix_ucg_state_transfer3_3_1.h"
 #include "error.h" //error
 #include <string.h> //strcmp()
-
 #include "neighbor.h" //neigh->build
 #include "neigh_list.h" //class NeighList
 #include "neigh_request.h" //neigh->request
@@ -21,14 +20,11 @@
 #include "domain.h" //temperature->compute_scalar
 #include "comm.h" //temperature->compute_scalar
 #include "irregular.h" //addforcetomonomers_virtualsitesareparticles
-
-///////
-#include "random_park.h" // delete later
-//////
-
+#include "random_park.h" // substitute for random_mars
 #include <fstream> //read input files: rates and mhcorr
 #include <string> //read input files: rates and mhcorr
 #include <cmath> //read input files: rates and mhcorr
+
 using namespace LAMMPS_NS;
 using namespace FixConst; //in fix.h, defines POST_FORCE, etc.
 
@@ -39,8 +35,6 @@ using namespace FixConst; //in fix.h, defines POST_FORCE, etc.
 FixUCGStateTrans3_3_1::FixUCGStateTrans3_3_1(LAMMPS *lmp, int narg, char **arg) :
   Fix(lmp,narg,arg)
 {
-  //Current usage: fix 1[0] all[1] ucg_state_trans2[2] 12121[3] nstates[4] 3[5] rates[6] rates.txt[7]  mhcorr[8] mhcorr.txt[9]
-  // where rates for a given state i are the entries in column i of rates.txt (1st row is forward rate, 2nd row is reverse rate). Same with mhcorr.
   
   MPI_Comm_rank(world,&me);
   MPI_Comm_size(world,&nprocs);
