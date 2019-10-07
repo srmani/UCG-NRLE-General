@@ -248,8 +248,6 @@ FixUCGStateTrans3_3_1::FixUCGStateTrans3_3_1(LAMMPS *lmp, int narg, char **arg) 
   MPI_Bcast(&mol_endid[0], nmol+1, MPI_UNSIGNED_LONG, 0, world);
   MPI_Bcast(&nmolreal,1,MPI_INT,0,world);
  
-  tagint *molecule = atom->molecule;
-  for(int i=0;i<atom->nlocal;i++) {int imol=molecule[i]; atom_state[i]=mol_state[imol];}
 
   //check for pair style with cutoff
   if (force->pair == NULL) error->all(FLERR,"fix ucg requires a pair style");
@@ -283,7 +281,6 @@ FixUCGStateTrans3_3_1::FixUCGStateTrans3_3_1(LAMMPS *lmp, int narg, char **arg) 
   peratom_flag = 1;
   size_peratom_cols = 0;
   peratom_freq = 1;
-  vector_atom = atom_state;
 
   //Output Info//
   if(me==0)
@@ -343,7 +340,6 @@ FixUCGStateTrans3_3_1::~FixUCGStateTrans3_3_1()
 	  memory->destroy(mol_desum_global);
 	  memory->destroy(restrictmol);
         }
-      memory->destroy(atom_state);
     }
 }
 
@@ -375,7 +371,6 @@ void FixUCGStateTrans3_3_1::allocate()
 	  memory->create(mol_desum_global,nmolp1,"fix:moldesumglobal");
 	  memory->create(restrictmol,nmolp1,"fix:restrictmol");
         }
-      memory->create(atom_state,nmax,"fix:atomstate");
     }
 }
 
@@ -607,7 +602,7 @@ void FixUCGStateTrans3_3_1::computemoldesum()
 	int ispecies=mol_species[imol];
 	if(trans_flag[imol]==0) continue;
 	int itype = type[i];
-	int newitype = getnewatomtype(tag[i],imol,itype,ispecies,0);
+	int newitype = getnewatomtype(imol,itype,ispecies);
        
 	jlist = firstneigh[i];
 	jnum = numneigh[i];
@@ -625,7 +620,7 @@ void FixUCGStateTrans3_3_1::computemoldesum()
 	    if(imol==jmol && tag[i]>tag[j]) continue; //skip j>i to avoid double counting
 	    if(trans_flag[jmol]==0 || imol != jmol) newjtype = jtype; //keep old jtype atom if 'j' belongs to different molecule irrespective of it is selected for transition
 	    else 
-		newjtype = getnewatomtype(tag[j],jmol,jtype,jspecies,0); //this condition executes when atom 'j' belongs to same molecule as atom 'i' and atom ID of 'i' is less than atom ID of 'j'
+		newjtype = getnewatomtype(jmol,jtype,jspecies); //this condition executes when atom 'j' belongs to same molecule as atom 'i' and atom ID of 'i' is less than atom ID of 'j'
 
 	    double dx = x[i][0]-x[j][0], dy = x[i][1]-x[j][1], dz = x[i][2]-x[j][2];
 	    double rsq = dx*dx+dy*dy+dz*dz;
@@ -704,15 +699,6 @@ void FixUCGStateTrans3_3_1::post_force(int vflag)
   int nlocal = atom->nlocal;
   const bigint natoms = atom->natoms;
   imageint *image = atom->image;
-
-  // reallocate work arrays if necessary
-  if (atom->nmax > nmax) {
-    memory->destroy(atom_state);
-    nmax = atom->nmax;
-    memory->create(atom_state,nmax,"fix:atomstate");
-    vector_atom = atom_state;
-  }
-  for(int i=0;i<nlocal;i++) {int imol=molecule[i]; atom_state[i]=mol_state[imol];}
   
   /*---------------------------------------------------------------------------------------------------*/
   /* The following steps are implemented for UCG transitions                                           */
@@ -815,9 +801,6 @@ void FixUCGStateTrans3_3_1::post_force(int vflag)
 	  next_reneighbor = update->ntimestep; //Trigger reneighboring at the next timestep. This is required since atom types are updated here.//
 	  MPI_Bcast(&mol_accept[0],nmol+1,MPI_UNSIGNED_SHORT,0,world);
 	  MPI_Bcast(&mol_state[0],nmol+1,MPI_SHORT,0,world); 
-
-	  set_filamentID(1,(long)update->ntimestep,Beta);
-
 	 
 #ifdef DIAGNOSTICS 
 	  if(me==0)
@@ -835,11 +818,10 @@ void FixUCGStateTrans3_3_1::post_force(int vflag)
             {
 	      if(!(mask[i] & groupbit)) continue;
 	      int imol = molecule[i];
-	      atom_state[i] = mol_state[imol];
 	      if(mol_accept[imol]==0) continue;
 	      int itype = type[i];
 	      int ispecies=mol_species[imol];
-	      int newitype=getnewatomtype(tag[i],imol,itype,ispecies,1);
+	      int newitype=getnewatomtype(imol,itype,ispecies);
 	      type[i]=newitype;
 
 	      /* Bond type update: not using bondlist here,because neigh_bond.cpp creates bondlist using bond_atom and bond_type. Hence, need to overwrite/update bond_type and trigger build_topology */
@@ -914,9 +896,10 @@ void FixUCGStateTrans3_3_1::reset_accumulators()
       trans_flag[imol]=0;
       mol_desum[imol]=0;
       mol_accept[imol]=0;
+    }
 }
 /*------------------------------------------------------------------------*/
-int FixUCGStateTrans3_3_1::getnewatomtype(int id, int imol, int itype, int ispecies, int update)
+int FixUCGStateTrans3_3_1::getnewatomtype(int imol, int itype, int ispecies)
 {
     return(itype+trans_flag[imol]*atomtype_offset[ispecies]);
 } 
