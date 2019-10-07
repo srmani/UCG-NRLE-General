@@ -70,7 +70,6 @@ namespace LAMMPS_NS {
     double *mol_desum_global;
     int *restrictmol;    //list of molecules allowed to transition
 
-
     // LAMMPS related and other variables
     //----------------------------------
     class RanMars *random;    //random number generator class

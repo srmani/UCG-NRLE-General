@@ -108,7 +108,6 @@ FixUCGStateTrans3_3_1::FixUCGStateTrans3_3_1(LAMMPS *lmp, int narg, char **arg) 
     bondtype_offset[i]=boffset_temp[i];
   }
   delete [] boffset_temp;
-
   
   //Read UCG related inputs by processor 0. Bcast required variables
   if(me==0)
