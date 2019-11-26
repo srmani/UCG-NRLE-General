@@ -44,10 +44,12 @@ namespace LAMMPS_NS {
     //-----------------------------------------
     int nspecies;
     int nstates_total;
+    int ntypereal;    //stores the summation of types of atoms in real molecules 
     bool allocated;
     unsigned short int restrictmolflag;//restrict transitions to certain mols
     int nmol;    //stores the total number of molecules based on the initial datafile                                                                                                                          
     int nmolreal;    //stores the total number of molecules calc. by the fix
+    int migrateatomsflag;
     double Beta;
 
     // variable allocated in the memory->create function

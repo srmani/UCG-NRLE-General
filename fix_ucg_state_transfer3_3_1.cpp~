@@ -296,11 +296,7 @@ FixUCGStateTrans3_3_1::~FixUCGStateTrans3_3_1()
 
   if(me==0)
     {
-      std::ofstream print("finalstate.in");
-      for(int imol=1;imol<(nmol+1);imol++)
-        print<<mol_state[imol]<<"\n";
-      print.close();
-
+      //print initialstate.in file for restart purposes
     }
   
   if(allocated)
