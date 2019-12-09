@@ -22,7 +22,6 @@ namespace LAMMPS_NS {
     void setup(int);
     void post_force_respa(int, int, int);
     void post_force(int);
-    virtual void end_of_step();
     int pack_forward_comm(int, int *, double *, int, int *);
     void unpack_forward_comm(int, int, double *);
     double memory_usage();
@@ -69,14 +68,12 @@ namespace LAMMPS_NS {
 
     // LAMMPS related and other variables
     //----------------------------------
-    class RanMars *random;    //random number generator class
-    class RanPark *randomp;
+    class RanPark *randomp; // random number generator
     int me, nprocs;
     int nlevels_respa;
     int tcomputeflag;    //temperature compute
     char *id_temp;    //temperature compute
     class Compute *temperature;    //temperature->compute_scalar()
-    double t_current;    //temperature at current step, computed at end_of_step
     double **cutsq;    //cutoff
     class NeighList *list;    //neighbor list class
 

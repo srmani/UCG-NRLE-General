@@ -77,14 +77,13 @@ FixUCGStateTrans3_3_1::FixUCGStateTrans3_3_1(LAMMPS *lmp, int narg, char **arg) 
     boffset_temp[i]=force->inumeric(FLERR,arg[iarg++]);
   }
  
-  {
-    //Finding the maximum molecule ID in the structure and storing in variable nmol//
-    int nlocal = atom->nlocal;
-    tagint *molecule = atom->molecule;	
-    int maxmol_local=-1;
-    for(int i=0;i<nlocal;i++) {if(molecule[i]>maxmol_local) maxmol_local=molecule[i];}
-    MPI_Allreduce(&maxmol_local,&nmol,1,MPI_INT,MPI_MAX,world);
-  }
+ 
+  //Finding the maximum molecule ID in the structure and storing in variable nmol//
+  int nlocal = atom->nlocal;
+  tagint *molecule = atom->molecule;	
+  int maxmol_local=-1;
+  for(int i=0;i<nlocal;i++) {if(molecule[i]>maxmol_local) maxmol_local=molecule[i];}
+  MPI_Allreduce(&maxmol_local,&nmol,1,MPI_INT,MPI_MAX,world);
     
   //Allocate arrays
   allocated=false;  allocate();
@@ -248,7 +247,6 @@ FixUCGStateTrans3_3_1::FixUCGStateTrans3_3_1(LAMMPS *lmp, int narg, char **arg) 
   tcomputeflag = 1;
   
   //initialize the rng
-  random = new RanMars(lmp, seed);
   randomp = new RanPark(lmp, seed);
   
   //Reneighboring//
@@ -360,7 +358,6 @@ void FixUCGStateTrans3_3_1::allocate()
 int FixUCGStateTrans3_3_1::setmask()
 {
   int mask=0;
-  //mask |= END_OF_STEP; // needed only to calc. instantaneous beta, which is not correct for MC-based state switching moves
   mask |= POST_FORCE;
   mask |= THERMO_ENERGY;
   mask |= POST_FORCE_RESPA;
@@ -575,66 +572,61 @@ void FixUCGStateTrans3_3_1::computemoldesum()
   const bigint natoms = atom->natoms;
   
   //delU for pair interactions
-  {
-    for(int ii=0;ii<inum;ii++)
-      {
-	int i = ilist[ii];
-	if(!(mask[i] & groupbit)) continue; //check atom 'i' is in group.
-	int imol = molecule[i];
-	int ispecies=mol_species[imol];
-	if(trans_flag[imol]==0) continue;
-	int itype = type[i];
-	int newitype = getnewatomtype(imol,itype,ispecies);
-       
-	jlist = firstneigh[i];
-	jnum = numneigh[i];
-	for(int jj=0;jj<jnum;jj++)
-	  {
-	    int j = jlist[jj];
-	    factor_lj = special_lj[sbmask(j)]; //Is set to 0 if ignoring pair energies between bonded atoms
-	    j &= NEIGHMASK;
-	    if(!(mask[j] & groupbit)) continue; //check atom 'j' is in group
-	    int jmol = molecule[j];
-	    int jspecies=mol_species[jmol];
-	    int jtype = type[j];
-	    int newjtype;
-
-	    if(imol==jmol && tag[i]>tag[j]) continue; //skip j>i to avoid double counting
-	    if(trans_flag[jmol]==0 || imol != jmol) newjtype = jtype; //keep old jtype atom if 'j' belongs to different molecule irrespective of it is selected for transition
-	    else 
-		newjtype = getnewatomtype(jmol,jtype,jspecies); //this condition executes when atom 'j' belongs to same molecule as atom 'i' and atom ID of 'i' is less than atom ID of 'j'
-
-	    double dx = x[i][0]-x[j][0], dy = x[i][1]-x[j][1], dz = x[i][2]-x[j][2];
-	    double rsq = dx*dx+dy*dy+dz*dz;
-	    if(rsq<cutsq[itype][jtype])
-	      {
-		double energy_old = force->pair->single(i,j,itype,jtype,rsq,factor_coul,factor_lj,fforce[0]);
-		double energy_new = force->pair->single(i,j,newitype,newjtype,rsq,factor_coul,factor_lj,fforce[1]);
-		mol_desum[imol] += energy_new-energy_old;	
-	      } 
-	  }
-      }
+  
+  for(int ii=0;ii<inum;ii++) {
+    int i = ilist[ii];
+    if(!(mask[i] & groupbit)) continue; //check atom 'i' is in group.
+    int imol = molecule[i];
+    int ispecies=mol_species[imol];
+    if(trans_flag[imol]==0) continue;
+    int itype = type[i];
+    int newitype = getnewatomtype(imol,itype,ispecies);
+    
+    jlist = firstneigh[i];
+    jnum = numneigh[i];
+    for(int jj=0;jj<jnum;jj++) {
+      int j = jlist[jj];
+      factor_lj = special_lj[sbmask(j)]; //Is set to 0 if ignoring pair energies between bonded atoms
+      j &= NEIGHMASK;
+      if(!(mask[j] & groupbit)) continue; //check atom 'j' is in group
+      int jmol = molecule[j];
+      int jspecies=mol_species[jmol];
+      int jtype = type[j];
+      int newjtype;
+      
+      if(imol==jmol && tag[i]>tag[j]) continue; //skip j>i to avoid double counting
+      if(trans_flag[jmol]==0 || imol != jmol) newjtype = jtype; //keep old jtype atom if 'j' belongs to different molecule irrespective of it is selected for transition
+      else 
+	newjtype = getnewatomtype(jmol,jtype,jspecies); //this condition executes when atom 'j' belongs to same molecule as atom 'i' and atom ID of 'i' is less than atom ID of 'j'
+      
+      double dx = x[i][0]-x[j][0], dy = x[i][1]-x[j][1], dz = x[i][2]-x[j][2];
+      double rsq = dx*dx+dy*dy+dz*dz;
+      if(rsq<cutsq[itype][jtype]) {
+	double energy_old = force->pair->single(i,j,itype,jtype,rsq,factor_coul,factor_lj,fforce[0]);
+	double energy_new = force->pair->single(i,j,newitype,newjtype,rsq,factor_coul,factor_lj,fforce[1]);
+	mol_desum[imol] += energy_new-energy_old;	
+      } 
+    }
   }
+  
 
   //delU for bond interactions if any
-  {
-    for(int n=0;n<nbondlist;n++)
-      {
-	int i = bondlist[n][0];
-	int inext = bondlist[n][1];
-	int ibondtype = bondlist[n][2];
-	int imol = molecule[i];
-	int ispecies=mol_species[imol];
-	if(trans_flag[imol]==0) continue;
-	int newibondtype = ibondtype + trans_flag[imol]*bondtype_offset[ispecies];
-	double dx = x[i][0]-x[inext][0], dy = x[i][1]-x[inext][1], dz = x[i][2]-x[inext][2];
-	double rsq = dx*dx+dy*dy+dz*dz;
-	double energy_old = force->bond->single(ibondtype,rsq,i,inext,bond_fforce[0]);
-	double energy_new = force->bond->single(newibondtype,rsq,i,inext,bond_fforce[1]);
-	mol_desum[imol] += energy_new-energy_old;
-      }
-  }
-
+  for(int n=0;n<nbondlist;n++)
+    {
+      int i = bondlist[n][0];
+      int inext = bondlist[n][1];
+      int ibondtype = bondlist[n][2];
+      int imol = molecule[i];
+      int ispecies=mol_species[imol];
+      if(trans_flag[imol]==0) continue;
+      int newibondtype = ibondtype + trans_flag[imol]*bondtype_offset[ispecies];
+      double dx = x[i][0]-x[inext][0], dy = x[i][1]-x[inext][1], dz = x[i][2]-x[inext][2];
+      double rsq = dx*dx+dy*dy+dz*dz;
+      double energy_old = force->bond->single(ibondtype,rsq,i,inext,bond_fforce[0]);
+      double energy_new = force->bond->single(newibondtype,rsq,i,inext,bond_fforce[1]);
+      mol_desum[imol] += energy_new-energy_old;
+    }
+  
   //Sum all the energy differences to get the total energy difference for each mol. Have to Bcast if all processor checks for reactions separately
   MPI_Reduce(&mol_desum[0],&mol_desum_global[0],nmolp1,MPI_DOUBLE,MPI_SUM,0,world);
 } 
@@ -649,12 +641,6 @@ void FixUCGStateTrans3_3_1::post_force(int vflag)
   double fforce[2],bond_fforce[2]; //value not used
   double factor_lj, factor_coul;
   factor_lj = factor_coul = 1.0; 
-
-  //temperature
-  /*{
-    t_current = temperature->compute_scalar();
-    beta = 1.0/(t_current * force->boltz);
-    }*/
   
   //Neighbor list variables//
   int inum = list->inum;
@@ -821,12 +807,6 @@ void FixUCGStateTrans3_3_1::post_force(int vflag)
         }//accept_flag if
     }//change_flag if
   if(nprocs > 1) comm->forward_comm_fix(this);
-}
-
-/* ---------------------------------------------------------------------- */
-void FixUCGStateTrans3_3_1::end_of_step()
-{
-  t_current = temperature->compute_scalar();
 }
 
 /* ---------------------------------------------------------------------- */
