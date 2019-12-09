@@ -286,7 +286,6 @@ FixUCGStateTrans3_3_1::FixUCGStateTrans3_3_1(LAMMPS *lmp, int narg, char **arg) 
 /* ---------------------------------------------------------------------- */
 FixUCGStateTrans3_3_1::~FixUCGStateTrans3_3_1()
 {
-  delete random;
   delete randomp;
   //delete temperature if fix created it, similar to fix_langevin
   if (tcomputeflag) modify->delete_compute(id_temp);
@@ -369,14 +368,6 @@ void FixUCGStateTrans3_3_1::consistencycheck()
 {
   /* check if atom_types and bond_types are consistent with nstates */
   {
-    int nlocal = atom->nlocal;
-    int *type = atom->type;
-    int *mask = atom->mask;
-    tagint *tag = atom->tag;
-    tagint *molecule = atom->molecule;
-    int *num_bond = atom->num_bond;
-    int **bond_type = atom->bond_type;
-
     int ntypes_expected=0,nbondtypes_expected=0;
     for(int i=0;i<nspecies;i++)
       {
@@ -555,9 +546,6 @@ void FixUCGStateTrans3_3_1::computemoldesum()
   int *jlist;
   
   //bond list variables//
-  int *num_bond = atom->num_bond;
-  tagint **bond_atom = atom->bond_atom;
-  int **bond_type = atom->bond_type;
   int **bondlist = neighbor->bondlist;
   int nbondlist = neighbor->nbondlist;
   
@@ -568,8 +556,6 @@ void FixUCGStateTrans3_3_1::computemoldesum()
   tagint *molecule = atom->molecule;
   int *type = atom->type;
   tagint *tag = atom->tag;
-  int nlocal = atom->nlocal;
-  const bigint natoms = atom->natoms;
   
   //delU for pair interactions
   
@@ -636,38 +622,23 @@ void FixUCGStateTrans3_3_1::post_force(int vflag)
 {
   //VARIABLES//
   unsigned short int change_flag=0,accept_flag=0;
-  double rand,beta,mhterm;
+  double rand,mhterm;
   int nmolp1=nmol+1;
   double fforce[2],bond_fforce[2]; //value not used
   double factor_lj, factor_coul;
   factor_lj = factor_coul = 1.0; 
   
-  //Neighbor list variables//
-  int inum = list->inum;
-  int *ilist = list->ilist;
-  int *numneigh = list->numneigh;
-  int **firstneigh = list->firstneigh;
-  int jnum;
-  int *jlist;
-  
   //bond list variables//
   int *num_bond = atom->num_bond;
   tagint **bond_atom = atom->bond_atom;
   int **bond_type = atom->bond_type;
-  int **bondlist = neighbor->bondlist;
-  int nbondlist = neighbor->nbondlist;
   
   //per atom variables//
-  double **x = atom->x;
-  double *special_lj = force->special_lj;
   int *mask = atom->mask;
   tagint *molecule = atom->molecule;
-  int *type = atom->type;
-  tagint *tag = atom->tag;
   int nlocal = atom->nlocal;
-  const bigint natoms = atom->natoms;
-  imageint *image = atom->image;
-  
+  int *type = atom->type;
+
   /*---------------------------------------------------------------------------------------------------*/
   /* The following steps are implemented for UCG transitions                                           */
   /* The UCG state transitions are governed by equation 8 and 9 in DOI:dx.doi.org/10.1021/ct500834     */
