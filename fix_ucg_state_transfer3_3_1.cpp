@@ -151,50 +151,6 @@ FixUCGStateTrans3_3_1::FixUCGStateTrans3_3_1(LAMMPS *lmp, int narg, char **arg) 
 		mhcorrfile.close();
 	      }
             }
-	  
-	  else if (strcmp(arg[iarg], "initialstatefile") == 0)
-            {
-	      iarg++;
-	      if (narg<iarg+1)  error->one(FLERR, "illegal fix ucg command-missing input");
-	      {
-		std::ifstream istatefile(arg[iarg++]);
-		if (!istatefile) { error->one(FLERR, "initialstate file missing in the working directory"); }
-		std::string istate0;
-		char *istate1;
-		int cumul_beads = 0;
-		nmolreal=0;
-		for (int imol=1;imol<(nmol+1);imol++)
-		  {
-		    istatefile >> istate0;
-		    istate1 = (char *)alloca(istate0.size() + 1);
-		    memcpy(istate1, istate0.c_str(), istate0.size() + 1);
-		    mol_state[imol] = force->inumeric(FLERR, istate1); //change to check if input is a number
-		    if(mol_state[imol]>=0) 
-		      nmolreal++; 
-		    int cumul_states = 0;
-		    for (int ispecies = 0; ispecies < nspecies; ispecies++)
-		      {
-			cumul_states += nstates[ispecies];
-			if (mol_state[imol] < cumul_states)
-			  {
-			    mol_species[imol] = ispecies;
-			    break;
-			  }
-		      }
-		    cumul_beads = cumul_beads + nspecies_beads[mol_species[imol]];
-		    mol_endid[imol] = cumul_beads;
-		  }
-		istatefile.close();
-	      }
-
-#ifdef DIAGNOSTICS
-	      std::ofstream write("molinfo_initial");
-	      write<<"molID"<<' '<<"mol_state"<<' '<<"mol_species"<<' '<<"mol_endid"<<"\n";
-	      for(int imol=1;imol<(nmol+1);imol++)
-		write<<imol<<' '<<mol_state[imol]<<' '<<mol_species[imol]<<' '<<mol_endid[imol]<<"\n";
-	      write.close();
-#endif
-            }
 
 	  else if (strcmp(arg[iarg], "restrictmol") == 0)
             {
@@ -221,13 +177,10 @@ FixUCGStateTrans3_3_1::FixUCGStateTrans3_3_1(LAMMPS *lmp, int narg, char **arg) 
 	    error->one(FLERR, "illegal fix ucg command-unknown keyword");
         }
     }
-	 
-  MPI_Bcast(&mol_state[0],nmol+1,MPI_SHORT,0,world);
-  MPI_Bcast(&mol_species[0],nmol+1,MPI_UNSIGNED_SHORT,0,world);
-  MPI_Bcast(&mol_endid[0], nmol+1, MPI_UNSIGNED_LONG, 0, world);
-  MPI_Bcast(&nmolreal,1,MPI_INT,0,world);
+  
+  consistencycheck();
+  find_initialstatedistribution();
  
-
   //check for pair style with cutoff
   if (force->pair == NULL) error->all(FLERR,"fix ucg requires a pair style");
   if (force->pair->cutsq == NULL) error->all(FLERR,"fix ucg is incompatible with pair style");
@@ -263,8 +216,6 @@ FixUCGStateTrans3_3_1::FixUCGStateTrans3_3_1(LAMMPS *lmp, int narg, char **arg) 
   //Output Info//
   if(me==0)
     {
-      printf("Fix ucg info::\n");
-      printf("Total number of states %d\n",nstates_total);
       printf("Input rate matrix\n");
       for(int i=0;i<nstates_total;i++)
 	{
@@ -272,6 +223,7 @@ FixUCGStateTrans3_3_1::FixUCGStateTrans3_3_1(LAMMPS *lmp, int narg, char **arg) 
 	    printf("%f ",rates[i][j]);
 	  printf("\n");
 	}
+
       printf("Input mhcorr matrix\n");
       for(int i=0;i<nstates_total;i++)
         {
@@ -279,7 +231,104 @@ FixUCGStateTrans3_3_1::FixUCGStateTrans3_3_1(LAMMPS *lmp, int narg, char **arg) 
             printf("%f ",mhcorr[i][j]);
           printf("\n");
         }
-      printf("Total molecules calc. by UCG %d, total defined in input datafile %d molecules\n\n",nmolreal,nmol);
+      printf("Total molecules in the system %d\n",nmol);
+    }
+}
+
+/* ---------------------------------------------------------------------- */
+void FixUCGStateTrans3_3_1::find_initialstatedistribution()
+{
+  
+  /* based on the assigned atom types, finds the respective state of each of the molecule
+     in the system */
+
+  //per-atom variables// 
+  
+  tagint *molecule = atom->molecule;
+  int *type = atom->type;
+  tagint *tag = atom->tag;
+  int nlocal = atom->nlocal;
+  
+  // local variables
+  
+  int cumul_types;
+  int cumul_states;
+  int cumul_beads;
+  int out_flag;
+  int imol,itype;
+  short int *mol_state_local=new short int [nmol+1];
+  short int *mol_species_local=new short int [nmol+1];
+  int *initial_distribution=new int [nstates_total] ();
+    
+  for(int imol=0;imol<(nmol+1);imol++)
+    {
+      //setting to negative number to use MPI_Max to accumulate across procs.                                                                                                             
+      mol_state_local[imol]=-100;
+      mol_species_local[imol]=-100;
+    }
+
+  //finding state distribtion in each proc. separately, summing it, and b_casting
+  //loops over all atoms in a proc. to find its state
+  //atoms belonging to same molecule are calc. and values overwritten with the same value 
+  //not an ideal way but ok as this function is called only once
+  
+  for(int i=0;i<nlocal;i++)
+    {
+      imol = molecule[i];
+      itype = type[i];
+      
+      out_flag=0;
+      cumul_states=0;
+      cumul_types=0;
+      for(int ispecies=0;ispecies<nspecies;ispecies++)
+	{
+	  for (int istates=0;istates<nstates[ispecies];istates++)
+	    {
+	      cumul_types+=atomtype_offset[ispecies];
+	      if(itype<=cumul_types)
+		{
+		  mol_state_local[imol]=cumul_states;
+		  mol_species_local[imol]=ispecies;
+		  out_flag=1;
+		  break; 
+		}
+	      cumul_states+=1;
+	    } 
+	  if(out_flag)
+	    break;
+	}
+    }
+  
+  MPI_Allreduce(&mol_state_local[0],&mol_state[0],(nmol+1),MPI_SHORT,MPI_MAX,world);
+  MPI_Allreduce(&mol_species_local[0],&mol_species[0],(nmol+1),MPI_SHORT,MPI_MAX,world);
+  
+  if(me==0)
+    {
+      cumul_beads=0;
+      for(imol=1;imol<(nmol+1);imol++)
+	{
+	  cumul_beads = cumul_beads + nspecies_beads[mol_species[imol]];       
+	  mol_endid[imol] = cumul_beads;
+	  initial_distribution[mol_state[imol]]+=1;
+	}
+    }
+  MPI_Bcast(&mol_endid[0],nmol+1,MPI_UNSIGNED_LONG,0,world);
+
+  if(me==0){
+    printf("Fix ucg info::\n");
+    printf("Total number of states %d\n",nstates_total);
+    printf("UCG calculated initial state distribution\n");
+    for (int istate=0;istate<nstates_total;istate++)
+      printf("state %d: %d\n",istate,initial_distribution[istate]);
+  }
+
+  if(me==0)
+    {
+      std::ofstream print("initialstate-calc.in");
+      print<<"MolID"<<' '<<"initialstateID"<<' '<<"speciesID"<<' '<<"LastAtomID"<<"\n";
+      for(int imol=1;imol<(nmol+1);imol++)
+        print<<imol<<' '<<mol_state[imol]<<' '<<mol_species[imol]<<' '<<mol_endid[imol]<<"\n";
+      print.close();
     }
 }
 
@@ -290,15 +339,6 @@ FixUCGStateTrans3_3_1::~FixUCGStateTrans3_3_1()
   //delete temperature if fix created it, similar to fix_langevin
   if (tcomputeflag) modify->delete_compute(id_temp);
   delete [] id_temp;
-
-  if(me==0)
-    {
-      std::ofstream print("finalstate.in");
-      for(int imol=1;imol<(nmol+1);imol++)
-        print<<mol_state[imol]<<"\n";
-      print.close();
-
-    }
   
   if(allocated)
     {
@@ -375,12 +415,7 @@ void FixUCGStateTrans3_3_1::consistencycheck()
 	nbondtypes_expected=nbondtypes_expected+nstates[i]*bondtype_offset[i];
       }
     
-    if((atom->ntypes!=ntypes_expected) || (atom->nbondtypes!=nbondtypes_expected)) error->all(FLERR,"number of atom or bond types defined not matching with expected numbers based on fix ucg inputs");
-    
-    if(nmol!=nmolreal)
-      error->all(FLERR,"mismatch in total molecules calculated by fix ucg. Possible error in initialstatefile");
-
-    //can possibly add a condition to check if atom types and bond types of the molecules are consistent with their defined initialstate 
+    if((atom->ntypes!=ntypes_expected) || (atom->nbondtypes!=nbondtypes_expected)) error->all(FLERR,"number of atom or bond types defined not matching with expected numbers based on fix ucg inputs");     
   }
 }
 
@@ -413,7 +448,6 @@ void FixUCGStateTrans3_3_1::setup(int vflag)
 {
   //compute temperature before first call to post_force - not needed. see setmask function
   //end_of_step();
-  consistencycheck();
   if(strstr(update->integrate_style,"verlet"))
     post_force(vflag);
   else
@@ -532,7 +566,6 @@ void FixUCGStateTrans3_3_1::rotatepointalongaxisbyangle(double *q, double *p, do
 
 void FixUCGStateTrans3_3_1::computemoldesum()
 {
-  int nmolp1=nmol+1;
   double fforce[2],bond_fforce[2]; 
   double factor_lj, factor_coul;
   factor_lj = factor_coul = 1.0; 
@@ -614,7 +647,7 @@ void FixUCGStateTrans3_3_1::computemoldesum()
     }
   
   //Sum all the energy differences to get the total energy difference for each mol. Have to Bcast if all processor checks for reactions separately
-  MPI_Reduce(&mol_desum[0],&mol_desum_global[0],nmolp1,MPI_DOUBLE,MPI_SUM,0,world);
+  MPI_Reduce(&mol_desum[0],&mol_desum_global[0],nmol+1,MPI_DOUBLE,MPI_SUM,0,world);
 } 
 
 /* ---------------------------------------------------------------------- */
@@ -623,7 +656,6 @@ void FixUCGStateTrans3_3_1::post_force(int vflag)
   //VARIABLES//
   unsigned short int change_flag=0,accept_flag=0;
   double rand,mhterm;
-  int nmolp1=nmol+1;
   double fforce[2],bond_fforce[2]; //value not used
   double factor_lj, factor_coul;
   factor_lj = factor_coul = 1.0; 
@@ -657,7 +689,7 @@ void FixUCGStateTrans3_3_1::post_force(int vflag)
       {
 	change_flag = 0;
 	double rsum;
-	for(int imol=1; imol<=nmolreal; imol++)
+	for(int imol=1; imol<=nmol; imol++)
 	  {
 	    if(restrictmolflag==1)
 	      if(restrictmol[imol]==0) continue;
@@ -702,14 +734,14 @@ void FixUCGStateTrans3_3_1::post_force(int vflag)
   /* step 3 and 4: if reactions were selected, calculate energy difference for the reaction and execute Metropolis-Hastings criterion to decide if selected reactions are to be accepted */
   if(change_flag==1)
     {
-      MPI_Bcast(&trans_flag[0],nmolp1,MPI_SHORT,0,world); //needed for computemoldesum function
+      MPI_Bcast(&trans_flag[0],nmol+1,MPI_SHORT,0,world); //needed for computemoldesum function
       computemoldesum();
       
       /* Meteropolis-Hastings acceptance criterion by Processor 0  only */
       if(me==0)
         {
 	  accept_flag=0;
-	  for(int imol=1;imol<=nmolreal;imol++)
+	  for(int imol=1;imol<=nmol;imol++)
             {
 	      int istate=mol_state[imol];
 	      if(trans_flag[imol]==0) continue;
@@ -823,8 +855,7 @@ double FixUCGStateTrans3_3_1::memory_usage()
 /* ---------------------------------------------------------------------- */
 void FixUCGStateTrans3_3_1::reset_accumulators()
 {
-  int nmolp1 = nmol+1;
-  for(int imol=0;imol<nmolp1;imol++)
+  for(int imol=0;imol<nmol+1;imol++)
     {
       trans_flag[imol]=0;
       mol_desum[imol]=0;

@@ -31,6 +31,7 @@ namespace LAMMPS_NS {
 
     // user-defined functions
     //-------------------------
+    void find_initialstatedistribution();
     void normalize(double *);
     void computecross(double *, double *, double *);
     double computedot(double *,double *);
@@ -53,7 +54,7 @@ namespace LAMMPS_NS {
     //-------------------------------------------------
     int *nspecies_beads;
     unsigned long int *mol_endid;
-    unsigned short int *mol_species;    //stores the species ID of each molecule
+    short int *mol_species;    //stores the species ID of each molecule
     int *atomtype_offset;
     int *bondtype_offset;
     int *nstates;
